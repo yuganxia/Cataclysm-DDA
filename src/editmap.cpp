@@ -63,12 +63,6 @@
 #include "vehicle.h"
 #include "vpart_position.h"
 
-static constexpr tripoint editmap_boundary_min( 0, 0, -OVERMAP_DEPTH );
-static constexpr tripoint editmap_boundary_max( MAPSIZE_X, MAPSIZE_Y, OVERMAP_HEIGHT + 1 );
-
-static constexpr half_open_cuboid<tripoint> editmap_boundaries(
-    editmap_boundary_min, editmap_boundary_max );
-
 // NOLINTNEXTLINE(cata-static-int_id-constants)
 static const ter_id undefined_ter_id( -1 );
 
@@ -632,14 +626,14 @@ void editmap::draw_main_ui_overlay()
                 for( int y = 0; y < SEEY * 2; y++ ) {
                     const tripoint tmp_p( x, y, target.z );
                     const tripoint map_p = origin_p + tmp_p;
-                    g->draw_radiation_override( map_p, tmpmap.get_radiation( tmp_p ) );
+                    g->draw_radiation_override( tripoint_bub_ms( map_p ), tmpmap.get_radiation( tmp_p ) );
                     // scent is managed in `game` instead of `map`, so there's no override for it
                     // temperature is managed in `game` instead of `map`, so there's no override for it
                     // TODO: visibility could be affected by both the actual map and the preview map,
                     // which complicates calculation, so there's no override for it (yet)
                     g->draw_terrain_override( map_p, tmpmap.ter( tmp_p ) );
                     g->draw_furniture_override( map_p, tmpmap.furn( tmp_p ) );
-                    g->draw_graffiti_override( map_p, tmpmap.has_graffiti_at( tmp_p ) );
+                    g->draw_graffiti_override( tripoint_bub_ms( map_p ), tmpmap.has_graffiti_at( tmp_p ) );
                     g->draw_trap_override( map_p, tmpmap.tr_at( tmp_p ).loadid );
                     g->draw_field_override( map_p, tmpmap.field_at( tmp_p ).displayed_field_type() );
                     const maptile &tile = tmpmap.maptile_at( tmp_p );
@@ -665,7 +659,7 @@ void editmap::draw_main_ui_overlay()
                     } else {
                         g->draw_vpart_override( map_p, vpart_id::NULL_ID(), 0, 0_degrees, false, point_zero );
                     }
-                    g->draw_below_override( map_p,
+                    g->draw_below_override( tripoint_bub_ms( map_p ),
                                             tmpmap.ter( tmp_p ).obj().has_flag( ter_furn_flag::TFLAG_NO_FLOOR ) );
                 }
             }
@@ -690,7 +684,8 @@ void editmap::draw_main_ui_overlay()
                 }
             }
             for( const auto &it : spawns ) {
-                g->draw_monster_override( it.first, std::get<0>( it.second ), std::get<1>( it.second ),
+                g->draw_monster_override( tripoint_bub_ms( it.first ), std::get<0>( it.second ),
+                                          std::get<1>( it.second ),
                                           std::get<2>( it.second ), std::get<3>( it.second ) );
             }
         } else {
@@ -761,7 +756,7 @@ void editmap::update_view_with_help( const std::string &txt, const std::string &
                map_cache.seen_cache[target.x][target.y],
                map_cache.camera_cache[target.x][target.y]
              );
-    map::apparent_light_info al = map::apparent_light_helper( map_cache, target );
+    map::apparent_light_info al = map::apparent_light_helper( map_cache, tripoint_bub_ms( target ) );
     int apparent_light = static_cast<int>(
                              here.apparent_light_at( target, here.get_visibility_variables_cache() ) );
     mvwprintw( w_info, point( 1, off++ ), _( "outside: %d obstructed: %d floor: %d" ),
@@ -1595,7 +1590,7 @@ void editmap::recalc_target( shapetype shape )
             map &here = get_map();
             for( const tripoint &p : here.points_in_radius( origin, radius ) ) {
                 if( rl_dist( p, origin ) <= radius ) {
-                    if( editmap_boundaries.contains( p ) ) {
+                    if( here.inbounds( p ) ) {
                         target_list.push_back( p );
                     }
                 }
@@ -1624,7 +1619,7 @@ void editmap::recalc_target( shapetype shape )
                 for( int y = s.y; y <= e.y; y++ ) {
                     if( shape == editmap_rect_filled || x == s.x || x == e.x || y == s.y || y == e.y ) {
                         const tripoint p( x, y, z );
-                        if( editmap_boundaries.contains( p ) ) {
+                        if( get_map().inbounds( p ) ) {
                             target_list.push_back( p );
                         }
                     }
@@ -1666,7 +1661,8 @@ bool editmap::move_target( const std::string &action, int moveorigin )
     if( eget_direction( mp, action ) ) {
         target.x = limited_shift( target.x, mp.x, 0, MAPSIZE_X );
         target.y = limited_shift( target.y, mp.y, 0, MAPSIZE_Y );
-        target.z = limited_shift( target.z, mp.z, -OVERMAP_DEPTH, OVERMAP_HEIGHT );
+        // OVERMAP_HEIGHT is the limit, not size of a 0 based vector, and limited_shift restricts to <, not <=
+        target.z = limited_shift( target.z, mp.z, -OVERMAP_DEPTH, OVERMAP_HEIGHT + 1 );
         if( move_origin ) {
             origin += mp;
         }
@@ -2103,8 +2099,8 @@ void editmap::mapgen_retarget()
         if( const std::optional<tripoint> vec = ctxt.get_direction( action ) ) {
             point vec_ms = omt_to_ms_copy( vec->xy() );
             tripoint ptarget = target + vec_ms;
-            if( editmap_boundaries.contains( ptarget ) &&
-                editmap_boundaries.contains( ptarget + point( SEEX, SEEY ) ) ) {
+            if( get_map().inbounds( ptarget ) &&
+                get_map().inbounds( ptarget + point( SEEX, SEEY ) ) ) {
                 target = ptarget;
 
                 target_list.clear();
