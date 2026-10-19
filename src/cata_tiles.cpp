@@ -2853,6 +2853,7 @@ bool cata_tiles::resolve_sprite_layers_3d( const std::string &id, TILE_CATEGORY 
     }
     const tile_type &ttype = res->tile();
     out.multitile = was_multitile;
+    out.offset = ttype.offset;
     out.resolved_id = &res->id();
     // draw_from_id_string_internal zeroes rota on non-rotating tiles so plain
     // floors never rotate; vertical-face 3D callers opt out to keep their
@@ -2891,6 +2892,14 @@ bool cata_tiles::resolve_sprite_layers_3d( const std::string &id, TILE_CATEGORY 
         }
     }
     return out.fg_found || out.bg_found;
+}
+
+bool cata_tiles::find_overlay_looks_like_3d( bool male, const std::string &overlay,
+        const std::string &variant, std::string &draw_id )
+{
+    // exactly the lookup 2D's draw_entity_with_overlays uses, shared rather
+    // than copied so the 3D paper doll can never drift from 2D
+    return find_overlay_looks_like( male, overlay, variant, draw_id );
 }
 
 std::unordered_set<std::string> cata_tiles::get_all_portrait_tile_ids( bool male ) const
@@ -5603,6 +5612,63 @@ void cata_tiles::get_furniture_rota_subtile( const tripoint_bub_ms &p, int &rota
             static_cast<int>( here.furn( p + point::north ) )
         };
         get_tile_values_with_ter( p, f.to_i(), neighborhood, subtile, rota, rotate_group );
+    }
+}
+
+void cata_tiles::memorize_map_memory( const tripoint_bub_ms &center )
+{
+    map &here = get_map();
+    avatar &you = get_avatar();
+    const visibility_variables &cache = here.get_visibility_variables_cache();
+    // sweep every level the current sight cast actually reached: the avatar's
+    // own level plus levels seen through holes and stairs (map::vision_levels,
+    // refreshed with the lightmap). levels no cast reached have no CLEAR tiles,
+    // so skipping them costs nothing. upper levels are never written from
+    // below, matching 2D's draw range.
+    std::vector<int> levels = here.vision_levels();
+    if( std::find( levels.begin(), levels.end(), center.z() ) == levels.end() ) {
+        levels.push_back( center.z() );
+    }
+    for( const int zlev : levels ) {
+        const level_cache &ch = here.access_cache( zlev );
+        // same "invisible" rule the 2D draw's apply_visible uses, minus its
+        // submap-aligned screen square: the whole bubble is safe to iterate
+        // because the visibility cache already cuts everything beyond
+        // unimpaired_range
+        const auto visible_at = [&]( const tripoint_bub_ms &q ) {
+            return here.inbounds( q ) && !would_apply_vision_effects(
+                       here.get_visibility( ch.visibility_cache[q.x()][q.y()], cache ) );
+        };
+        // the sweep in draw(): memorize everything the character just saw,
+        // terrain first and decorations only when their cache was invalidated
+        for( int y = 0; y < MAPSIZE_Y; y++ ) {
+            for( int x = 0; x < MAPSIZE_X; x++ ) {
+                const tripoint_bub_ms p( x, y, zlev );
+                if( !visible_at( p ) ) {
+                    continue;
+                }
+                int height_3d = 0;
+                std::array<bool, 5> invisible;
+                invisible[0] = false;
+                for( int i = 0; i < 4; i++ ) {
+                    invisible[1 + i] = !visible_at( p + neighborhood[i] );
+                }
+                const lit_level lighting = ch.visibility_cache[x][y];
+                draw_terrain( p, lighting, height_3d, invisible, true );
+                if( here.memory_cache_dec_is_dirty( p ) ) {
+                    you.memorize_clear_decoration( here.get_abs( p ), "" );
+                    draw_furniture( p, lighting, height_3d, invisible, true );
+                    draw_trap( p, lighting, height_3d, invisible, true );
+                    draw_part_con( p, lighting, height_3d, invisible, true );
+                    draw_vpart_no_roof( p, lighting, height_3d, invisible, true );
+                    draw_vpart_roof( p, lighting, height_3d, invisible, true );
+                    here.memory_cache_dec_set_dirty( p, false );
+                }
+            }
+        }
+        // draw_terrain re-dirties connecting terrain on every visit; clear it
+        // here like draw() does so the flag does not force a sweep every frame
+        here.access_cache( zlev ).map_memory_sweep_pending = false;
     }
 }
 
