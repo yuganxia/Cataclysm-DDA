@@ -52,6 +52,21 @@ TEST_CASE( "map_memory_defaults", "[map_memory]" )
     CHECK( default_tile.get_dec_rotation() == 0 );
 }
 
+TEST_CASE( "map_memory_region_presence", "[map_memory]" )
+{
+    map_memory memory;
+    CHECK_FALSE( memory.has_memory_in_region( p1, p2 ) );
+    memory.prepare_region( p1, p2 );
+    CHECK_FALSE( memory.has_memory_in_region( p1, p2 ) );
+
+    memory.set_tile_symbol( p2, 1 );
+    CHECK( memory.has_memory_in_region( p2, p2 ) );
+    CHECK( memory.has_memory_in_region( p1, p2 ) );
+    CHECK_FALSE( memory.has_memory_in_region( p1, p1 ) );
+    CHECK_FALSE( memory.has_memory_in_region( tripoint_abs_ms( p2.xy(), p2.z() + 1 ),
+                  tripoint_abs_ms( p2.xy(), p2.z() + 1 ) ) );
+}
+
 TEST_CASE( "map_memory_remembers", "[map_memory]" )
 {
     map_memory memory;
